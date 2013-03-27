@@ -292,27 +292,32 @@ var Filer = new function() {
    * @param {...string} var_args 1-2 paths to lookup and return entries for.
    *     These can be paths or filesystem: URLs.
    */
-  var getEntry_ = function(callback, var_args) {
-    var srcStr = arguments[1];
-    var destStr = arguments[2];
+  var getEntry_ = function(callback, opt_errorHandler, var_args) {
+    var srcStr = arguments[2];
+    var destStr = arguments[3];
+
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
 
     var onError = function(e) {
       if (e.code == FileError.NOT_FOUND_ERR) {
         if (destStr) {
-          throw new Error('"' + srcStr + '" or "' + destStr +
-                          '" does not exist.');
+          errorHandler(new Error('"' + srcStr + '" or "' + destStr +
+                          '" does not exist.'));
+          return;
         } else {
-          throw new Error('"' + srcStr + '" does not exist.');
+          errorHandler(new Error('"' + srcStr + '" does not exist.'));
+          return;
         }
       } else {
-        throw new Error('Problem getting Entry for one or more paths.');
+        errorHandler(new Error('Problem getting Entry for one or more paths.'));
+        return;
       }
     };
 
     // Build a filesystem: URL manually if we need to.
     var src = pathToFsURL_(srcStr);
 
-    if (arguments.length == 3) {
+    if (arguments.length == 4) {
       var dest = pathToFsURL_(destStr);
       self.resolveLocalFileSystemURL(src, function(srcEntry) {
         self.resolveLocalFileSystemURL(dest, function(destEntry) {
@@ -335,13 +340,16 @@ var Filer = new function() {
   var copyOrMove_ = function(src, dest, opt_newName, opt_successCallback,
                              opt_errorHandler, opt_deleteOrig) {
     var self = this;
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
 
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(new Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     if (typeof src != typeof dest) {
-      throw new Error(INCORRECT_ARGS);
+      errorHandler(new Error(INCORRECT_ARGS));
+      return;
     }
 
     var newName = opt_newName || null;
@@ -349,27 +357,22 @@ var Filer = new function() {
 
     if ((src.isFile || dest.isDirectory) && dest.isDirectory) {
       if (deleteOrig) {
-        src.moveTo(dest, newName, opt_successCallback, opt_errorHandler);
+        src.moveTo(dest, newName, opt_successCallback, errorHandler);
       } else {
-        src.copyTo(dest, newName, opt_successCallback, opt_errorHandler);
+        src.copyTo(dest, newName, opt_successCallback, errorHandler);
       }
     } else {
       getEntry_(function(srcEntry, destDir) {
         if (!destDir.isDirectory) {
-          var e = new Error('Oops! "' + destDir.name + ' is not a directory!');
-          if (opt_errorHandler) {
-            opt_errorHandler(e);
-          } else {
-            throw e;
-          }
+          errorHandler(new Error('Oops! "' + destDir.name + ' is not a directory!'));
           return;
         }
         if (deleteOrig) {
-          srcEntry.moveTo(destDir, newName, opt_successCallback, opt_errorHandler);
+          srcEntry.moveTo(destDir, newName, opt_successCallback, errorHandler);
         } else {
-          srcEntry.copyTo(destDir, newName, opt_successCallback, opt_errorHandler);
+          srcEntry.copyTo(destDir, newName, opt_successCallback, errorHandler);
         }
-      }, src, dest);
+      }, opt_errorHandler, src, dest);
     }
   }
 
@@ -423,11 +426,14 @@ var Filer = new function() {
    */
   Filer.prototype.init = function(opt_initObj, opt_successCallback,
                                   opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!self.requestFileSystem) {
-      throw new MyFileError({
+      errorHandler(new MyFileError({
         code: FileError.BROWSER_NOT_SUPPORTED,
         name: 'BROWSER_NOT_SUPPORTED'
-      });
+      }));
+      return;
     }
 
     var initObj = opt_initObj ? opt_initObj : {}; // Use defaults if obj is null.
@@ -450,11 +456,11 @@ var Filer = new function() {
     if (this.type == self.PERSISTENT && !!self.storageInfo) {
       self.storageInfo.requestQuota(this.type, size, function(grantedBytes) {
         self.requestFileSystem(
-            this.type, grantedBytes, init.bind(this), opt_errorHandler);
-      }.bind(this), opt_errorHandler);
+            this.type, grantedBytes, init.bind(this), errorHandler);
+      }.bind(this), errorHandler);
     } else {
       self.requestFileSystem(
-          this.type, size, init.bind(this), opt_errorHandler);
+          this.type, size, init.bind(this), errorHandler);
     }
   };
 
@@ -470,8 +476,11 @@ var Filer = new function() {
    */
   Filer.prototype.ls = function(dirEntryOrPath, successCallback,
                                 opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(new Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     var callback = function(dirEntry) {
@@ -496,7 +505,7 @@ var Filer = new function() {
             entries_ = entries_.concat(Util.toArray(results));
             readEntries();
           }
-        }, opt_errorHandler);
+        }, errorHandler);
       };
 
       readEntries();
@@ -505,10 +514,10 @@ var Filer = new function() {
     if (dirEntryOrPath.isDirectory) { // passed a DirectoryEntry.
       callback(dirEntryOrPath);
     } else if (isFsURL_(dirEntryOrPath)) { // passed a filesystem URL.
-      getEntry_(callback, pathToFsURL_(dirEntryOrPath));
+      getEntry_(callback, opt_errorHandler, pathToFsURL_(dirEntryOrPath));
     } else { // Passed a path. Look up DirectoryEntry and proceeed.
       // TODO: Find way to use getEntry_(callback, dirEntryOrPath); with cwd_.
-      cwd_.getDirectory(dirEntryOrPath, {}, callback, opt_errorHandler);
+      cwd_.getDirectory(dirEntryOrPath, {}, callback, errorHandler);
     }
   };
 
@@ -526,8 +535,11 @@ var Filer = new function() {
    */
   Filer.prototype.mkdir = function(path, opt_exclusive, opt_successCallback,
                                    opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(new Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     var exclusive = opt_exclusive != null ? opt_exclusive : false;
@@ -552,22 +564,15 @@ var Filer = new function() {
               if (opt_successCallback) opt_successCallback(dirEntry);
             }
           } else {
-            var e = new Error(path + ' is not a directory');
-            if (opt_errorHandler) {
-              opt_errorHandler(e);
-            } else {
-              throw e;
-            }
+            errorHandler(new Error(path + ' is not a directory'));
+            return;
           }
         },
         function(e) {
           if (e.code == FileError.INVALID_MODIFICATION_ERR) {
             e.message = "'" + path + "' already exists";
-            if (opt_errorHandler) {
-              opt_errorHandler(e);
-            } else {
-              throw e;
-            }
+            errorHandler(e);
+            return;
           }
         }
       );
@@ -585,16 +590,19 @@ var Filer = new function() {
    * @param {Function=} opt_errorHandler Optional error callback.
    */
   Filer.prototype.open = function(entryOrPath, successCallback, opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(new Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     if (entryOrPath.isFile) {
-      entryOrPath.file(successCallback, opt_errorHandler);
+      entryOrPath.file(successCallback, errorHandler);
     } else {
       getEntry_(function(fileEntry) {
-        fileEntry.file(successCallback, opt_errorHandler);
-      }, pathToFsURL_(entryOrPath));
+        fileEntry.file(successCallback, errorHandler);
+      }, opt_errorHandler, pathToFsURL_(entryOrPath));
     }
   };
 
@@ -611,8 +619,11 @@ var Filer = new function() {
    */
   Filer.prototype.create = function(path, opt_exclusive, successCallback,
                                     opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(new Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     var exclusive = opt_exclusive != null ? opt_exclusive : true;
@@ -622,11 +633,8 @@ var Filer = new function() {
         if (e.code == FileError.INVALID_MODIFICATION_ERR) {
           e.message = "'" + path + "' already exists";
         }
-        if (opt_errorHandler) {
-          opt_errorHandler(e);
-        } else {
-          throw e;
-        }
+        errorHandler(e);
+        return;
       }
     );
   };
@@ -663,22 +671,25 @@ var Filer = new function() {
    */
   Filer.prototype.rm = function(entryOrPath, successCallback,
                                 opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(new Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     var removeIt = function(entry) {
       if (entry.isFile) {
-        entry.remove(successCallback, opt_errorHandler);
+        entry.remove(successCallback, errorHandler);
       } else if (entry.isDirectory) {
-        entry.removeRecursively(successCallback, opt_errorHandler);
+        entry.removeRecursively(successCallback, errorHandler);
       }
     };
 
     if (entryOrPath.isFile || entryOrPath.isDirectory) {
       removeIt(entryOrPath);
     } else {
-      getEntry_(removeIt, entryOrPath);
+      getEntry_(removeIt, opt_errorHandler, entryOrPath);
     }
   };
 
@@ -694,8 +705,11 @@ var Filer = new function() {
    */
   Filer.prototype.cd = function(dirEntryOrPath, opt_successCallback,
                                 opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(new Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     if (dirEntryOrPath.isDirectory) {
@@ -710,14 +724,10 @@ var Filer = new function() {
           cwd_ = dirEntry;
           opt_successCallback && opt_successCallback(cwd_);
         } else {
-          var e = new Error(NOT_A_DIRECTORY);
-          if (opt_errorHandler) {
-            opt_errorHandler(e);
-          } else {
-            throw e;
-          }
+          errorHandler(new Error(NOT_A_DIRECTORY));
+          return;
         }
-      }, dirEntryOrPath);
+      }, opt_errorHandler, dirEntryOrPath);
     }
   };
 
@@ -756,14 +766,17 @@ var Filer = new function() {
    */
   Filer.prototype.write = function(entryOrPath, dataObj, opt_successCallback,
                                    opt_errorHandler) {
+    var errorHandler = opt_errorHandler || function(e) { throw e; };
+
     if (!fs_) {
-      throw new Error(FS_INIT_ERROR_MSG);
+      errorHandler(Error(FS_INIT_ERROR_MSG));
+      return;
     }
 
     var writeFile_ = function(fileEntry) {
       fileEntry.createWriter(function(fileWriter) {
 
-        fileWriter.onerror = opt_errorHandler;
+        fileWriter.onerror = errorHandler;
 
         if (dataObj.append) {
           fileWriter.onwriteend = function(e) {
@@ -793,16 +806,16 @@ var Filer = new function() {
 
         fileWriter.write(blob);
 
-      }, opt_errorHandler);
+      }, errorHandler);
     };
 
     if (entryOrPath.isFile) {
       writeFile_(entryOrPath);
     } else if (isFsURL_(entryOrPath)) {
-      getEntry_(writeFile_, entryOrPath);
+      getEntry_(writeFile_, opt_errorHandler, entryOrPath);
     } else {
       cwd_.getFile(entryOrPath, {create: true, exclusive: false}, writeFile_,
-                   opt_errorHandler);
+                   errorHandler);
     }
   };
 
